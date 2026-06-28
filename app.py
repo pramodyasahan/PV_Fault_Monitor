@@ -5,7 +5,9 @@
 # ================================================================
 
 import os
+import io
 import json
+import re
 import pickle
 import warnings
 from datetime import datetime
@@ -65,45 +67,197 @@ Z2_LABELS = {
 # ── CUSTOM CSS ───────────────────────────────────────────────────
 st.markdown("""
 <style>
-[data-testid="stAppViewContainer"] { background: #0d1117; }
-[data-testid="stHeader"]           { background: transparent; }
-[data-testid="stSidebar"]          { background: #161b27; }
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700;800&display=swap');
+
+:root {
+    --term-bg: #05080d;
+    --term-panel: #0a1018;
+    --term-panel-2: #0e1624;
+    --term-line: #17314a;
+    --term-green: #22c55e;
+    --term-cyan: #22d3ee;
+    --term-amber: #f59e0b;
+    --term-red: #ef4444;
+    --term-text: #dbeafe;
+    --term-muted: #7dd3fc;
+}
+
+[data-testid="stAppViewContainer"] {
+    background:
+        radial-gradient(circle at top left, rgba(34,211,238,0.10), transparent 28%),
+        radial-gradient(circle at top right, rgba(34,197,94,0.08), transparent 24%),
+        linear-gradient(180deg, #030712 0%, #05080d 100%);
+}
+[data-testid="stHeader"]  { background: transparent; }
+[data-testid="stSidebar"] { background: #070b12; }
+.block-container { padding-top: 1.1rem; }
+
+html, body, [class*="css"] { font-family: 'JetBrains Mono', monospace; }
 
 .main-title {
-    text-align: center; font-size: 30px; font-weight: 900;
-    color: #f1f5f9; letter-spacing: -0.5px; margin-bottom: 2px;
+    text-align: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 29px;
+    font-weight: 800;
+    color: #d1fae5;
+    letter-spacing: 0.6px;
+    text-shadow: 0 0 16px rgba(34,197,94,0.36);
+    margin-bottom: 4px;
 }
 .main-sub {
-    text-align: center; font-size: 12px; color: #475569; margin-bottom: 18px;
+    text-align: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: #67e8f9;
+    margin-bottom: 16px;
 }
 .zone-title {
-    font-size: 15px; font-weight: 700; color: #e2e8f0;
-    border-bottom: 2px solid #1d4ed8; padding-bottom: 5px; margin-bottom: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    font-weight: 800;
+    color: #cffafe;
+    background: linear-gradient(90deg, rgba(34,211,238,0.16), rgba(34,197,94,0.06));
+    border: 1px solid #164e63;
+    border-left: 4px solid #22d3ee;
+    border-radius: 8px;
+    padding: 9px 10px;
+    margin-bottom: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
 }
+
+.zone-title::after {
+    content: " ONLINE";
+    float: right;
+    color: #22c55e;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 1px;
+}
+.demo-caption {
+    color: #67e8f9;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.7px;
+    text-transform: uppercase;
+    margin: 4px 0 8px 0;
+}
+.report-card {
+    background: linear-gradient(135deg, rgba(14,116,144,0.14), rgba(6,78,59,0.10));
+    border: 1px solid #164e63;
+    border-radius: 12px;
+    padding: 12px;
+    margin-top: 8px;
+    color: #d1fae5;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+}
+
 .badge {
-    border-radius: 7px; padding: 7px 12px; font-size: 13px;
-    font-weight: 600; text-align: center; margin: 6px 0; display: block;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 800;
+    text-align: center;
+    margin: 6px 0;
+    display: block;
+    box-shadow: inset 0 0 18px rgba(255,255,255,0.03), 0 0 18px rgba(34,211,238,0.05);
 }
 .metric-row {
-    background: #1a2133; border-radius: 5px; padding: 6px 11px;
-    margin: 3px 0; font-size: 12px; border-left: 3px solid #334155; color: #cbd5e1;
+    background: #08111d;
+    border-radius: 7px;
+    padding: 8px 11px;
+    margin: 5px 0;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    border-left: 3px solid #22d3ee;
+    color: #cbd5e1;
 }
-.prob-wrap { margin: 2px 0; }
+.prob-wrap { margin: 5px 0; }
 .prob-label {
-    display: flex; justify-content: space-between;
-    font-size: 11px; color: #94a3b8; margin-bottom: 2px;
+    display: flex;
+    justify-content: space-between;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: #93c5fd;
+    margin-bottom: 3px;
 }
 .prob-track {
-    height: 3px; background: #1e2433; border-radius: 2px;
+    height: 5px;
+    background: #07111d;
+    border: 1px solid #12263d;
+    border-radius: 3px;
+    overflow: hidden;
 }
-.llm-box {
-    background: #0f172a; border: 1px solid #1e293b; border-radius: 10px;
-    padding: 16px; color: #e2e8f0; line-height: 1.75; font-size: 13px;
+.llm-box, .terminal-report {
+    background: #030712;
+    border: 1px solid #14532d;
+    border-radius: 12px;
+    padding: 16px;
+    color: #d1fae5;
+    line-height: 1.75;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    box-shadow: 0 0 24px rgba(34,197,94,0.08), inset 0 0 18px rgba(34,197,94,0.03);
 }
-div[data-testid="stButton"] > button { border-radius: 7px; font-weight: 600; }
+.terminal-card {
+    background: linear-gradient(180deg, rgba(8,17,29,0.98), rgba(3,7,18,0.98));
+    border: 1px solid #164e63;
+    border-radius: 12px;
+    padding: 12px 13px;
+    margin: 8px 0;
+    box-shadow: 0 0 22px rgba(34,211,238,0.07), inset 0 0 22px rgba(15,23,42,0.35);
+}
+.terminal-card-title {
+    color: #22d3ee;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    margin-bottom: 8px;
+}
+.terminal-line {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 4px 0;
+    border-bottom: 1px dashed rgba(34,211,238,0.12);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+}
+.terminal-line:last-child { border-bottom: none; }
+.terminal-key { color: #7dd3fc; }
+.terminal-value { color: #d1fae5; font-weight: 800; text-align: right; }
+.small-chip {
+    display: inline-block;
+    border: 1px solid #164e63;
+    color: #67e8f9;
+    background: rgba(8,47,73,0.30);
+    padding: 2px 7px;
+    border-radius: 999px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 700;
+    margin: 2px 3px 2px 0;
+}
+div[data-testid="stMetric"] {
+    background: #07111d;
+    border: 1px solid #12324a;
+    border-radius: 10px;
+    padding: 7px 9px;
+}
+div[data-testid="stButton"] > button,
 div[data-testid="stDownloadButton"] > button {
-    border-radius: 7px; font-weight: 600; width: 100%;
+    border-radius: 8px;
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 800;
+    border: 1px solid #164e63;
+    background: linear-gradient(180deg, #0e7490, #064e3b);
+    color: #ecfeff;
 }
+hr { border-color: #12324a !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -242,15 +396,16 @@ def run_z1(df_sys: pd.DataFrame, df_arr, m: dict) -> dict:
     cls  = int(logit.argmax(1))
     prob = torch.softmax(logit, 1)[0].numpy()
 
-    s2_cls, s2_lbl = None, None
+    s2_cls, s2_lbl, s2_info = None, None, {}
     if cls in [2, 3] and df_arr is not None:
-        x2    = torch.tensor(prep_z1_arr(df_arr, m["z1s2_sc"]))
+        x2     = torch.tensor(prep_z1_arr(df_arr, m["z1s2_sc"]))
         logit2 = m["z1s2"](x2)
         s2_cls = int(logit2.argmax(1))
         s2_lbl = Z1_S2_LABELS[s2_cls]
+        s2_info = parse_z1_stage2(s2_lbl, s2_cls)
 
     return {"cls": cls, "label": Z1_S1_LABELS[cls],
-            "probs": prob, "s2_cls": s2_cls, "s2_label": s2_lbl}
+            "probs": prob, "s2_cls": s2_cls, "s2_label": s2_lbl, **s2_info}
 
 
 def run_z2(df: pd.DataFrame, m: dict) -> dict:
@@ -263,12 +418,12 @@ def run_z2(df: pd.DataFrame, m: dict) -> dict:
 def run_z3(df: pd.DataFrame, m: dict) -> dict:
     X_s   = prep_z3(df, m["z3_sc"])
     esr   = float(np.clip(m["z3"].predict(X_s)[0], 0.15, 0.40))
-    deg   = float(np.clip((esr - 0.15) / (0.30 - 0.15) * 100, 0, 100))
+    deg   = esr_to_degradation_percentage(esr)
     fault = esr >= 0.30
     row   = df.iloc[0]
     return {
         "esr": esr, "deg": deg, "fault": fault,
-        "label": "Degraded — Replacement Recommended" if fault else f"Healthy ({deg:.1f}% degraded)",
+        "label": zone3_health_label(esr, deg),
         "irr":  float(row.get("Irradiance", 0)),
         "tamb": float(row.get("T_ambient", 0)),
         "irms": float(row.get("I_rms_high", 0)),
@@ -348,9 +503,9 @@ def plot_gauge(esr: float, deg: float) -> go.Figure:
             "bar":  {"color": c},
             "bgcolor": _BG_PANEL, "bordercolor": _GRID_COL,
             "steps": [
-                {"range": [0,  50], "color": "#14532d18"},
-                {"range": [50, 80], "color": "#71400a18"},
-                {"range": [80,100], "color": "#450a0a28"},
+                {"range": [0,  50], "color": "rgba(34, 197, 94, 0.10)"},
+                {"range": [50, 80], "color": "rgba(245, 158, 11, 0.10)"},
+                {"range": [80,100], "color": "rgba(239, 68, 68, 0.14)"},
             ],
             "threshold": {"line": {"color": "#ef4444", "width": 3},
                           "thickness": 0.8, "value": 100},
@@ -388,6 +543,82 @@ def prob_bars(labels: dict, probs: np.ndarray, pred_cls: int) -> str:
         )
     return html
 
+
+
+
+def parse_z1_stage2(label: str, cls: int) -> dict:
+    """Convert Stage 2 class label into engineering fields for UI/reporting."""
+    if label is None:
+        return {}
+    info = {
+        "stage2_raw": label,
+        "stage2_cls": cls,
+        "stage2_fault_type": None,
+        "stage2_array": None,
+        "r_ll": None,
+        "r_ll_float": None,
+        "sc_severity": None,
+    }
+    if "Array 1" in label:
+        info["stage2_array"] = "Array 1"
+    elif "Array 2" in label:
+        info["stage2_array"] = "Array 2"
+
+    if label.startswith("SC"):
+        info["stage2_fault_type"] = "Short-Circuit"
+        # Label format: "SC — Array 1  |  R_LL = 10 Ω"
+        try:
+            raw = label.split("R_LL =", 1)[1].split("Ω", 1)[0].strip()
+            info["r_ll"] = f"{raw} Ω"
+            info["r_ll_float"] = float(raw)
+        except Exception:
+            info["r_ll"] = "Unavailable"
+            info["r_ll_float"] = None
+
+        r = info["r_ll_float"]
+        if r is not None:
+            if r <= 0.1:
+                info["sc_severity"] = "Critical / near-solid short"
+            elif r <= 10:
+                info["sc_severity"] = "High severity short"
+            elif r <= 20:
+                info["sc_severity"] = "Moderate severity short"
+            else:
+                info["sc_severity"] = "Mild short-circuit path"
+
+    elif label.startswith("Open-Circuit"):
+        info["stage2_fault_type"] = "Open-Circuit"
+        info["sc_severity"] = "Not applicable"
+
+    return info
+
+
+def terminal_panel(title: str, rows: dict, color: str = "#22d3ee") -> str:
+    """Small terminal-style key/value card."""
+    html = f'<div class="terminal-card" style="border-color:{color}">'
+    html += f'<div class="terminal-card-title">▣ {title}</div>'
+    for k, v in rows.items():
+        html += (
+            '<div class="terminal-line">'
+            f'<span class="terminal-key">{k}</span>'
+            f'<span class="terminal-value">{v}</span>'
+            '</div>'
+        )
+    html += '</div>'
+    return html
+
+
+def esr_to_degradation_percentage(esr: float) -> float:
+    """Map ESR 0.15–0.30 Ω to 0–100%; clamp above 0.30 Ω as fault-level 100%."""
+    return float(np.clip((esr - 0.15) / (0.30 - 0.15) * 100, 0, 100))
+
+
+def zone3_health_label(esr: float, deg: float) -> str:
+    if esr >= 0.30:
+        return "Fault — ESR threshold exceeded / 100% degraded"
+    if esr > 0.15:
+        return f"Ageing — {deg:.1f}% degraded"
+    return "Healthy — 0.0% degraded"
 
 def zone_status(r, zone: int):
     if r is None:
@@ -475,7 +706,21 @@ def _local_report(r1, r2, r3) -> str:
         }.get(r1["cls"], ("Unknown fault type", "Impact unknown."))
         lines.append(f"- **Zone 1 ({r1['label']})**: {fault_detail[0]}. {fault_detail[1]}")
         if r1.get("s2_label"):
-            lines.append(f"  - Localised to: {r1['s2_label']}")
+            lines.append(f"  - Localisation output: {r1['s2_label']}")
+            if r1.get("stage2_fault_type") == "Short-Circuit":
+                lines.append(
+                    f"  - SC interpretation: affected array = {r1.get('stage2_array', 'Unknown')}; "
+                    f"estimated R_LL = {r1.get('r_ll', 'Unavailable')}; "
+                    f"severity = {r1.get('sc_severity', 'Unavailable')}. "
+                    "Lower R_LL means a lower-impedance fault path, higher circulating current risk, "
+                    "stronger thermal stress, and greater urgency for isolation."
+                )
+            elif r1.get("stage2_fault_type") == "Open-Circuit":
+                lines.append(
+                    f"  - OC interpretation: affected array = {r1.get('stage2_array', 'Unknown')}. "
+                    "R_LL is not applicable because the diagnosed fault is an interrupted current path, "
+                    "not a line-to-line short."
+                )
     if r2 and r2["cls"] != 0:
         igbt_num = r2['label'].split()[0] if r2['label'] else "?"
         lines.append(
@@ -490,10 +735,15 @@ def _local_report(r1, r2, r3) -> str:
                 f"threshold (degradation: {r3['deg']:.1f}%). High ESR increases voltage ripple, "
                 "raises capacitor temperature, and risks catastrophic failure under load transients."
             )
-        elif r3["deg"] >= 70:
+        elif r3["esr"] > 0.15:
             lines.append(
-                f"- **Zone 3 (Ageing)**: ESR = {r3['esr']:.4f} Ω ({r3['deg']:.1f}% degraded). "
-                "Approaching fault threshold — plan replacement within the next maintenance cycle."
+                f"- **Zone 3 (Capacitor ageing)**: ESR = {r3['esr']:.4f} Ω, which lies inside "
+                f"the 0.15–0.30 Ω ageing band. Estimated degradation = {r3['deg']:.1f}%. "
+                "This is not yet a hard fault, but it gives a continuous health index for planning maintenance."
+            )
+        else:
+            lines.append(
+                f"- **Zone 3 (Healthy)**: ESR = {r3['esr']:.4f} Ω and estimated degradation = {r3['deg']:.1f}%."
             )
     if not faults:
         lines.append("No faults detected — all zones within normal operating limits.")
@@ -501,7 +751,9 @@ def _local_report(r1, r2, r3) -> str:
     # ── Recommended Actions ──────────────────────────────────────
     lines.append("\n**3. Recommended Actions**")
     if r1 and r1["cls"] == 2:
-        lines.append("- [IMMEDIATE] Inspect Zone 1 PV array for short-circuit fault; isolate affected string and measure I–V curves at module level.")
+        sc_target = f"{r1.get('stage2_array', 'affected array')}"
+        rll_text = f" with estimated R_LL={r1.get('r_ll')}" if r1.get('r_ll') else ""
+        lines.append(f"- [IMMEDIATE] Isolate {sc_target}{rll_text}; inspect string wiring, connectors, bypass diode paths, insulation damage, and module hotspots.")
     elif r1 and r1["cls"] == 3:
         lines.append("- [IMMEDIATE] Inspect Zone 1 for open-circuit string; check fuses, connectors, and bypass diodes.")
     elif r1 and r1["cls"] == 1:
@@ -547,7 +799,15 @@ def gpt_explain(r1, r2, r3) -> str:
         findings = []
         if r1:
             line = f"Zone 1 (PV Array): **{r1['label']}**"
-            if r1.get("s2_label"): line += f" → Localised as: {r1['s2_label']}"
+            if r1.get("s2_label"):
+                line += f" → Localised as: {r1['s2_label']}"
+            if r1.get("stage2_fault_type") == "Short-Circuit":
+                line += (
+                    f" | Parsed SC result: faulty_array={r1.get('stage2_array')}, "
+                    f"R_LL={r1.get('r_ll')}, severity={r1.get('sc_severity')}"
+                )
+            elif r1.get("stage2_fault_type") == "Open-Circuit":
+                line += f" | Parsed OC result: faulty_array={r1.get('stage2_array')}; R_LL=not applicable"
             findings.append(line)
         if r2:
             findings.append(f"Zone 2 (IGBT Inverter): **{r2['label']}**")
@@ -564,13 +824,18 @@ def gpt_explain(r1, r2, r3) -> str:
 FAULT DIAGNOSIS RESULTS:
 {findings_str}
 
-Write a concise maintenance report including:
-1. **System Health Summary** — overall plant status in 2 sentences
-2. **Fault Analysis** — for each detected fault: the physical cause, effect on system performance, and estimated power loss impact
-3. **Recommended Actions** — prioritised list with urgency tag: [IMMEDIATE], [WITHIN 48H], or [SCHEDULED]
-4. **Risk Assessment** — what happens if faults are left unaddressed
+Write a polished engineering maintenance report suitable for a final-year project viva/demo. Use clear section headings and concise technical language. Include:
 
-Be specific, use technical language appropriate for an electrical engineer, and keep the total response under 350 words."""
+1. **Executive System Health Summary** — overall status and most urgent issue in 2-3 sentences.
+2. **Evidence From AI Models** — mention the diagnostic zone, predicted class, confidence where available, and the sensor/trajectory evidence implied by the model.
+3. **Fault Physics Explanation** — explain the likely electrical mechanism, including how the fault changes current/voltage/ripple behaviour.
+4. **Short-Circuit Detail** — when Zone 1 is SC, explicitly explain the faulty array, predicted R_LL value, severity, and what low vs high R_LL means electrically. When Zone 1 is OC, state that R_LL is not applicable.
+5. **IGBT Inverter Detail** — when Zone 2 is T1-T6, identify the failed open switch and describe the expected alpha-beta current trajectory distortion, harmonic effect, and inverter risk.
+6. **Capacitor Health Detail** — when ESR is between 0.15 and 0.30 Ohm, report degradation percentage as an ageing/health-index result, not as a hard fault. If ESR >= 0.30 Ohm, classify it as fault-level degradation.
+7. **Prioritised Maintenance Plan** — actions tagged [IMMEDIATE], [WITHIN 48H], or [SCHEDULED].
+8. **Viva-Ready Note** — one sentence explaining why this hybrid architecture uses LSTM/CNN-1D/XGBoost instead of one model for all zones.
+
+Keep the total response under 650 words. Avoid vague statements. Do not invent numerical values not supplied in the diagnosis results."""
 
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -603,7 +868,14 @@ def make_report(r1, r2, r3, llm_text: str) -> str:
         f"  Fault Type : {r1['label'] if r1 else 'No data provided'}",
     ]
     if r1 and r1.get("s2_label"):
-        lines.append(f"  Localised  : {r1['s2_label']}")
+        lines.append(f"  Stage 2    : {r1['s2_label']}")
+        if r1.get("stage2_array"):
+            lines.append(f"  Array      : {r1['stage2_array']}")
+        if r1.get("stage2_fault_type") == "Short-Circuit":
+            lines.append(f"  R_LL       : {r1.get('r_ll', 'Unavailable')}")
+            lines.append(f"  SC Severity: {r1.get('sc_severity', 'Unavailable')}")
+        elif r1.get("stage2_fault_type") == "Open-Circuit":
+            lines.append("  R_LL       : Not applicable for open-circuit fault")
 
     lines += [
         "", "ZONE 2 — IGBT INVERTER FAULT DIAGNOSIS",
@@ -627,16 +899,166 @@ def make_report(r1, r2, r3, llm_text: str) -> str:
     return "\n".join(lines)
 
 
+def _pdf_safe(text) -> str:
+    """Make strings safe for ReportLab built-in fonts."""
+    text = "" if text is None else str(text)
+    replacements = {
+        "Ω": " Ohm", "≥": ">=", "≤": "<=", "–": "-", "—": "-",
+        "α": "alpha", "β": "beta", "°": " deg ", "•": "-",
+        "→": "->", "×": "x", "²": "2",
+    }
+    for a, b in replacements.items():
+        text = text.replace(a, b)
+    return text
+
+
+def _confidence(result) -> str:
+    if not result or "probs" not in result:
+        return "N/A"
+    try:
+        return f"{float(np.max(result['probs'])) * 100:.1f}%"
+    except Exception:
+        return "N/A"
+
+
+def make_pdf_report(r1, r2, r3, llm_text: str) -> bytes:
+    """Create a presentation-quality PDF report for the dashboard download."""
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import mm
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        rightMargin=15 * mm,
+        leftMargin=15 * mm,
+        topMargin=15 * mm,
+        bottomMargin=15 * mm,
+    )
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(
+        name="ReportTitle", parent=styles["Title"], fontName="Helvetica-Bold",
+        fontSize=18, leading=22, textColor=colors.HexColor("#064e3b"), spaceAfter=6,
+    ))
+    styles.add(ParagraphStyle(
+        name="ReportSub", parent=styles["Normal"], fontSize=9, leading=12,
+        textColor=colors.HexColor("#475569"), spaceAfter=10,
+    ))
+    styles.add(ParagraphStyle(
+        name="Section", parent=styles["Heading2"], fontName="Helvetica-Bold",
+        fontSize=12, leading=15, textColor=colors.HexColor("#0e7490"), spaceBefore=10, spaceAfter=6,
+    ))
+    styles.add(ParagraphStyle(
+        name="Small", parent=styles["Normal"], fontSize=8.4, leading=11,
+        textColor=colors.HexColor("#0f172a"), spaceAfter=4,
+    ))
+    styles.add(ParagraphStyle(
+        name="Body", parent=styles["Normal"], fontSize=9.2, leading=12.5,
+        textColor=colors.HexColor("#0f172a"), spaceAfter=5,
+    ))
+
+    story = []
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    story.append(Paragraph("PV Plant Fault Diagnosis Report", styles["ReportTitle"]))
+    story.append(Paragraph(
+        _pdf_safe(f"Hybrid AI Architecture for Solar PV Fault Diagnosis | 5 kW Grid-Connected PV System | Generated: {ts}"),
+        styles["ReportSub"],
+    ))
+    story.append(HRFlowable(width="100%", thickness=1.2, color=colors.HexColor("#0e7490")))
+    story.append(Spacer(1, 6))
+
+    z1_status = r1["label"] if r1 else "No data provided"
+    z2_status = r2["label"] if r2 else "No data provided"
+    z3_status = r3["label"] if r3 else "No data provided"
+    overall = "FAULT DETECTED" if ((r1 and r1.get("cls") != 0) or (r2 and r2.get("cls") != 0) or (r3 and r3.get("fault"))) else "NORMAL / MONITORING"
+
+    story.append(Paragraph("Executive Summary", styles["Section"]))
+    summary_data = [
+        ["System Status", _pdf_safe(overall)],
+        ["Zone 1 - PV Array", _pdf_safe(z1_status), "Confidence", _confidence(r1)],
+        ["Zone 2 - IGBT Inverter", _pdf_safe(z2_status), "Confidence", _confidence(r2)],
+        ["Zone 3 - DC-Link Capacitor", _pdf_safe(z3_status), "Confidence", "Regression output"],
+    ]
+    table = Table(summary_data, colWidths=[42*mm, 76*mm, 28*mm, 30*mm])
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#ecfeff")),
+        ("TEXTCOLOR", (0,0), (-1,-1), colors.HexColor("#0f172a")),
+        ("FONTNAME", (0,0), (-1,-1), "Helvetica"),
+        ("FONTNAME", (0,0), (0,-1), "Helvetica-Bold"),
+        ("GRID", (0,0), (-1,-1), 0.25, colors.HexColor("#cbd5e1")),
+        ("VALIGN", (0,0), (-1,-1), "TOP"),
+        ("FONTSIZE", (0,0), (-1,-1), 8.2),
+        ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.white, colors.HexColor("#f8fafc")]),
+    ]))
+    story.append(table)
+
+    story.append(Paragraph("Zone-Specific Diagnostic Outputs", styles["Section"]))
+    detail_rows = [
+        ["Zone", "Primary Output", "Engineering Detail"],
+        ["Zone 1", _pdf_safe(z1_status), "No Stage 2 output"],
+        ["Zone 2", _pdf_safe(z2_status), _pdf_safe("Healthy inverter" if not r2 or r2.get("cls") == 0 else "Open-circuit IGBT switch detected from alpha-beta current trajectory")],
+        ["Zone 3", _pdf_safe(z3_status), "No capacitor sample"],
+    ]
+    if r1 and r1.get("s2_label"):
+        if r1.get("stage2_fault_type") == "Short-Circuit":
+            detail_rows[1][2] = _pdf_safe(f"Localised to {r1.get('stage2_array')}; estimated R_LL={r1.get('r_ll')}; severity={r1.get('sc_severity')}")
+        else:
+            detail_rows[1][2] = _pdf_safe(f"Localised to {r1.get('stage2_array')}; R_LL not applicable for open-circuit")
+    if r3:
+        detail_rows[3][2] = _pdf_safe(
+            f"ESR={r3['esr']:.4f} Ohm; estimated degradation={r3['deg']:.1f}%; "
+            f"Irr={r3['irr']:.0f} W/m2; T={r3['tamb']:.1f} deg C; V_ripple={r3['vrip']:.4f} V"
+        )
+    diag_table = Table(detail_rows, colWidths=[24*mm, 58*mm, 94*mm])
+    diag_table.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#0f766e")),
+        ("TEXTCOLOR", (0,0), (-1,0), colors.white),
+        ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+        ("FONTNAME", (0,1), (-1,-1), "Helvetica"),
+        ("GRID", (0,0), (-1,-1), 0.25, colors.HexColor("#cbd5e1")),
+        ("VALIGN", (0,0), (-1,-1), "TOP"),
+        ("FONTSIZE", (0,0), (-1,-1), 8.0),
+        ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.white, colors.HexColor("#f8fafc")]),
+    ]))
+    story.append(diag_table)
+
+    story.append(Paragraph("Engineering Analysis", styles["Section"]))
+    if not llm_text:
+        llm_text = _local_report(r1, r2, r3)
+    clean = _pdf_safe(llm_text)
+    clean = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", clean)
+    for block in clean.split("\n"):
+        block = block.strip()
+        if not block:
+            story.append(Spacer(1, 4))
+            continue
+        if block.startswith("#"):
+            story.append(Paragraph(block.replace("#", "").strip(), styles["Section"]))
+        else:
+            story.append(Paragraph(block, styles["Body"]))
+
+    story.append(Spacer(1, 8))
+    story.append(HRFlowable(width="100%", thickness=0.8, color=colors.HexColor("#cbd5e1")))
+    story.append(Paragraph(
+        "Note: This report is an AI-assisted diagnostic aid. Final maintenance decisions should be verified with electrical measurements, insulation testing, thermal inspection, and site safety procedures.",
+        styles["Small"],
+    ))
+    doc.build(story)
+    return buf.getvalue()
+
+
 # ════════════════════════════════════════════════════════════════
 # MAIN
 # ════════════════════════════════════════════════════════════════
 
 def main():
     # ── Header ───────────────────────────────────────────────────
-    st.markdown('<div class="main-title">⚡ PV Plant Fault Monitoring System</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-title">▣ PV-FAULT//ENGINEERING_DIAGNOSTIC_TERMINAL</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="main-sub">Hybrid AI Architecture for Solar PV Fault Diagnosis &nbsp;|&nbsp; '
-        'University of Moratuwa, Department of Electrical Engineering</div>',
+        '<div class="main-sub">HYBRID AI ARCHITECTURE · 5 kW GRID-CONNECTED PV SYSTEM · UOM ELECTRICAL ENGINEERING</div>',
         unsafe_allow_html=True
     )
 
@@ -663,6 +1085,19 @@ def main():
         c, lbl = zone_status(r, zone)
         zone_names = {1:"Zone 1 — PV Array", 2:"Zone 2 — IGBT Inverter", 3:"Zone 3 — Capacitor"}
         col.markdown(badge(f"{zone_names[zone]}: {lbl}", c), unsafe_allow_html=True)
+
+    active_faults = sum([
+        1 if st.session_state.r1 and st.session_state.r1["cls"] != 0 else 0,
+        1 if st.session_state.r2 and st.session_state.r2["cls"] != 0 else 0,
+        1 if st.session_state.r3 and st.session_state.r3["fault"] else 0,
+    ])
+    terminal_color = "#ef4444" if active_faults else "#22c55e"
+    st.markdown(terminal_panel("system bus", {
+        "MODE": "LIVE INFERENCE / DEMO",
+        "MODEL STACK": "Zone1 LSTM · Zone2 CNN-1D · Zone3 XGBoost",
+        "ACTIVE FAULTS": active_faults,
+        "TIMESTAMP": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }, terminal_color), unsafe_allow_html=True)
 
     st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
@@ -719,10 +1154,32 @@ def main():
 
             # Stage 2 localisation
             if r["cls"] in [2, 3]:
-                st.markdown("**Stage 2 — Array Localisation**")
-                a2, b2 = st.columns(2)
-                if a2.button("Sample Arrays",  key="z1arr_s"):
-                    st.session_state.df1a = sample("z1_sc_arrays.csv")
+                st.markdown("**Stage 2 — Array Localisation / R_LL Severity**")
+                st.markdown('<div class="demo-caption">Select the matching per-array sample after Stage 1 detects SC or OC</div>', unsafe_allow_html=True)
+                if r["cls"] == 2:
+                    st.caption("SC localisation samples - output includes Array and R_LL")
+                    sc_cols = st.columns(4)
+                    sc_opts = [
+                        ("A1 0.05Ω", "z1_sc_array1_rll_0p05.csv"),
+                        ("A1 10Ω",   "z1_sc_array1_rll_10p0.csv"),
+                        ("A1 20Ω",   "z1_sc_array1_rll_20p0.csv"),
+                        ("A1 30Ω",   "z1_sc_array1_rll_30p0.csv"),
+                        ("A2 0.05Ω", "z1_sc_array2_rll_0p05.csv"),
+                        ("A2 10Ω",   "z1_sc_array2_rll_10p0.csv"),
+                        ("A2 20Ω",   "z1_sc_array2_rll_20p0.csv"),
+                        ("A2 30Ω",   "z1_sc_array2_rll_30p0.csv"),
+                    ]
+                    for i, (txt, fname) in enumerate(sc_opts):
+                        if sc_cols[i % 4].button(txt, key=f"z1s2_{fname}", use_container_width=True):
+                            st.session_state.df1a = sample(fname); st.session_state.llm = ""
+                elif r["cls"] == 3:
+                    st.caption("OC localisation samples - R_LL is not applicable")
+                    oc_cols = st.columns(2)
+                    if oc_cols[0].button("OC Array 1", key="z1oc_a1", use_container_width=True):
+                        st.session_state.df1a = sample("z1_oc_array1.csv"); st.session_state.llm = ""
+                    if oc_cols[1].button("OC Array 2", key="z1oc_a2", use_container_width=True):
+                        st.session_state.df1a = sample("z1_oc_array2.csv"); st.session_state.llm = ""
+
                 uf1a = st.file_uploader("Upload Per-Array CSV", type="csv", key="uf1a",
                                          help="Columns: V_1, I_1, P_1, V_2, I_2, P_2, Irr, T")
                 if uf1a:
@@ -747,6 +1204,16 @@ def main():
                                 st.error(f"Stage 2 error: {e}")
             if r.get("s2_label"):
                 st.markdown(badge(f"📍 {r['s2_label']}", "#8b5cf6"), unsafe_allow_html=True)
+                detail_rows = {
+                    "FAULT ROUTE": r.get("stage2_fault_type", "Unknown"),
+                    "LOCALISATION": r.get("stage2_array", "Unknown"),
+                }
+                if r.get("stage2_fault_type") == "Short-Circuit":
+                    detail_rows["R_LL OUTPUT"] = r.get("r_ll", "Unavailable")
+                    detail_rows["SC SEVERITY"] = r.get("sc_severity", "Unavailable")
+                else:
+                    detail_rows["R_LL OUTPUT"] = "N/A for open-circuit"
+                st.markdown(terminal_panel("zone 1 stage-2 decoded output", detail_rows, "#8b5cf6"), unsafe_allow_html=True)
 
     # ══════════════════════════════════════════════════
     # ZONE 2 — IGBT Inverter
@@ -754,9 +1221,23 @@ def main():
     with z2:
         st.markdown('<div class="zone-title">⚡ Zone 2 — IGBT Inverter (CNN-1D)</div>', unsafe_allow_html=True)
 
-        a, b = st.columns(2)
-        if a.button("Healthy",   key="z2h"):  st.session_state.df2 = sample("z2_healthy.csv")
-        if b.button("T1 Fault",  key="z2t1"): st.session_state.df2 = sample("z2_t1_fault.csv")
+        st.markdown('<div class="demo-caption">Demo samples - all 7 inverter classes</div>', unsafe_allow_html=True)
+        z2r1 = st.columns(4)
+        z2r2 = st.columns(3)
+        if z2r1[0].button("Healthy", key="z2h", use_container_width=True):
+            st.session_state.df2 = sample("z2_healthy.csv"); st.session_state.r2 = None; st.session_state.llm = ""
+        if z2r1[1].button("T1 Fault", key="z2t1", use_container_width=True):
+            st.session_state.df2 = sample("z2_t1_fault.csv"); st.session_state.r2 = None; st.session_state.llm = ""
+        if z2r1[2].button("T2 Fault", key="z2t2", use_container_width=True):
+            st.session_state.df2 = sample("z2_t2_fault.csv"); st.session_state.r2 = None; st.session_state.llm = ""
+        if z2r1[3].button("T3 Fault", key="z2t3", use_container_width=True):
+            st.session_state.df2 = sample("z2_t3_fault.csv"); st.session_state.r2 = None; st.session_state.llm = ""
+        if z2r2[0].button("T4 Fault", key="z2t4", use_container_width=True):
+            st.session_state.df2 = sample("z2_t4_fault.csv"); st.session_state.r2 = None; st.session_state.llm = ""
+        if z2r2[1].button("T5 Fault", key="z2t5", use_container_width=True):
+            st.session_state.df2 = sample("z2_t5_fault.csv"); st.session_state.r2 = None; st.session_state.llm = ""
+        if z2r2[2].button("T6 Fault", key="z2t6", use_container_width=True):
+            st.session_state.df2 = sample("z2_t6_fault.csv"); st.session_state.r2 = None; st.session_state.llm = ""
 
         uf2 = st.file_uploader("Upload Current Trajectory CSV", type="csv", key="uf2",
                                 help="Columns: I_alpha, I_beta, Irradiance, Temperature (≥32 rows)")
@@ -836,10 +1317,13 @@ def main():
             c_col, _ = zone_status(r, 3)
             st.markdown(badge(r["label"], c_col), unsafe_allow_html=True)
             st.markdown(
-                f'<div class="metric-row">'
-                f'ESR: <b>{r["esr"]:.4f} Ω</b> &nbsp;|&nbsp; '
-                f'Threshold: 0.30 Ω &nbsp;|&nbsp; '
-                f'Degradation: <b>{r["deg"]:.1f}%</b></div>',
+                terminal_panel("zone 3 health-index output", {
+                    "PREDICTED ESR": f'{r["esr"]:.4f} Ω',
+                    "AGEING BAND": "0.15–0.30 Ω",
+                    "FAULT THRESHOLD": "≥ 0.30 Ω",
+                    "DEGRADATION %": f'{r["deg"]:.1f}%',
+                    "INTERPRETATION": "Hard fault" if r["fault"] else ("Ageing / warning" if r["esr"] > 0.15 else "Healthy"),
+                }, c_col),
                 unsafe_allow_html=True,
             )
 
@@ -850,7 +1334,7 @@ def main():
         llm_col, rep_col = st.columns([3, 1])
 
         with llm_col:
-            st.markdown("### 🤖 AI Maintenance Assistant")
+            st.markdown("### ▣ ENGINEERING ANALYSIS CONSOLE")
             if st.button("Generate Maintenance Analysis",
                          type="primary", use_container_width=True):
                 with st.spinner("Generating analysis… (up to 8 s)"):
@@ -884,6 +1368,22 @@ def main():
                 mime="text/plain",
                 use_container_width=True,
             )
+            try:
+                pdf_bytes = make_pdf_report(
+                    st.session_state.r1,
+                    st.session_state.r2,
+                    st.session_state.r3,
+                    st.session_state.llm,
+                )
+                st.download_button(
+                    label="⬇️ Download Report (.pdf)",
+                    data=pdf_bytes,
+                    file_name=f"pv_fault_report_{ts_str}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                )
+            except Exception as e:
+                st.warning(f"PDF report generation failed: {e}")
             st.markdown("&nbsp;")
             if st.button("🔄 Reset All Zones", use_container_width=True):
                 for k in defaults:
