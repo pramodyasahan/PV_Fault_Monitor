@@ -1023,12 +1023,10 @@ def _pdf_safe(text):
         text = text.replace(a, b)
     return _sanitize_report_text(text)
 
-def _pdf_xml(text):
+def _pdf_xml(text: str) -> str:
     import html
     text = _pdf_safe(text)
     text = html.escape(text)
-    for token in ["/","|",";",":","=",",","-"]:
-        text = text.replace(token, token+"<font size='1'> </font>")
     return text
 
 def _pdf_para(text, style):
