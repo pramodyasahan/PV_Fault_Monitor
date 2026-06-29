@@ -640,13 +640,13 @@ def _confidence(result):
 # LLM + LOCAL FALLBACK
 # ════════════════════════════════════════════════════════════════
 
-def _sanitize_report_text(text):
+def _sanitize_report_text(text: str) -> str:
     text = "" if text is None else str(text)
-    text = re.sub(r"\[(?:URGENT|CRITICAL|WITHIN\s*48H|SCHEDULED|PRIORITY\s*\d+)\]\s*","",text,flags=re.IGNORECASE)
-    fast_term = "im"+"mediate"
-    text = re.sub(rf"\b{fast_term}\s+review\b","engineering review",text,flags=re.IGNORECASE)
-    text = re.sub(rf"\b{fast_term}\b","prompt engineering review",text,flags=re.IGNORECASE)
-    text = re.sub(r"prioriti[sz]ed maintenance plan","Engineering Response Guidance",text,flags=re.IGNORECASE)
+    # Remove square-bracket urgency labels only
+    text = re.sub(
+        r"\[(?:URGENT|CRITICAL|WITHIN\s*48H|SCHEDULED|IMMEDIATE|PRIORITY\s*\d+)\]\s*",
+        "", text, flags=re.IGNORECASE
+    )
     return text.strip()
 
 def _local_report(r1, r2, r3):
@@ -731,19 +731,34 @@ def gpt_explain(r1, r2, r3):
         if r2: findings.append(f"Zone 2 (IGBT Inverter): **{r2['label']}** | confidence={_confidence(r2)}")
         if r3: findings.append(f"Zone 3 (DC-Link Capacitor): **{r3['label']}** | ESR={r3['esr']:.4f} Ω | Degradation={r3['deg']:.1f}%")
         findings_str = "\n".join(f"- {f}" for f in findings) if findings else "- No faults detected."
-        prompt = f"""You are a senior solar PV plant maintenance engineer reviewing AI-generated diagnostic results.
+        prompt = f"""You are a senior solar PV plant maintenance engineer writing the technical body of an engineering diagnostic report.
 
-FAULT DIAGNOSIS RESULTS:
+The report already contains an executive summary table and zone output table. Write ONLY the technical analysis using these four bold section titles — do NOT use markdown ## headers, do NOT repeat an executive summary:
+
+**Fault Physics Interpretation**
+Write what each detected fault means physically and its impact on system performance.
+
+**Engineering Response Guidance**
+Write specific inspection and verification steps for each fault using neutral language: inspect, isolate, verify, compare with baseline, plan component-level assessment.
+
+**Confidence Assessment**
+Comment on model confidence levels and whether results warrant field verification.
+
+**Hybrid Architecture Note**
+One short paragraph explaining why different model types are used for each zone (LSTM for IV curves, CNN-1D for alpha-beta trajectories, XGBoost for tabular ESR features).
+
+DIAGNOSED FAULTS:
 {findings_str}
 
-Write a fixed-format engineering diagnostic report with exactly these five sections:
-1. **Executive System Health Summary**
-2. **Evidence From AI Models**
-3. **Fault Physics Interpretation**
-4. **Engineering Response Guidance**
-5. **Hybrid Architecture Note**
-
-Rules: No urgency labels in square brackets. Neutral engineering language. When Zone 1 is SC include faulty array, R_LL, severity, and note lower R_LL means higher stress. When Zone 1 is OC state R_LL not applicable. When Zone 3 ESR is 0.15-0.30 Ω report as ageing index, not hard fault. Do not invent values. Under 500 words."""
+Rules:
+- Bold section titles only, no ## markdown headers, no numbered sections
+- No urgency bracket labels
+- When Zone 1 is SC: state the faulty array, R_LL value, severity — lower R_LL means lower impedance and higher electrical stress
+- When Zone 1 is OC: state the faulty array — R_LL is not applicable for open-circuit
+- When Zone 3 ESR is between 0.15 and 0.30 Ω: describe as a health/ageing index result, not a hard fault
+- When Zone 3 ESR is >= 0.30 Ω: describe as fault-level degradation
+- Do not invent numerical values not supplied above
+- Under 380 words to fit everything into 1 page"""
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role":"user","content":prompt}],
@@ -1012,127 +1027,232 @@ def make_docx_report_file(r1, r2, r3, llm_text: str) -> bytes:
 
 
 # ════════════════════════════════════════════════════════════════
-# EXPORT — PDF  (unchanged from original)
+# EXPORT — PDF
 # ════════════════════════════════════════════════════════════════
 
-def _pdf_safe(text):
+def _sanitize_report_text(text: str) -> str:
     text = "" if text is None else str(text)
-    for a, b in {"Ω":" Ohm","≥":">=","≤":"<=","–":"-","—":"-","α":"alpha",
-                 "β":"beta","°":" deg ","•":"-","→":"->","×":"x","²":"2",
-                 "⚠️":"","🔴":"","✅":"","⚪":"","📍":""}.items():
+    text = re.sub(
+        r"\[(?:URGENT|CRITICAL|WITHIN\s*48H|SCHEDULED|IMMEDIATE|PRIORITY\s*\d+)\]\s*",
+        "", text, flags=re.IGNORECASE
+    )
+    return text.strip()
+
+
+def _pdf_safe(text) -> str:
+    text = "" if text is None else str(text)
+    for a, b in {
+        "Ω": " Ohm", "≥": ">=", "≤": "<=", "–": "-", "—": "-",
+        "α": "alpha", "β": "beta", "°": " deg", "•": "-",
+        "→": "->", "×": "x", "²": "2",
+        "⚠️": "", "🔴": "", "✅": "", "⚪": "", "📍": "",
+        "\u2019": "'", "\u2018": "'", "\u201c": '"', "\u201d": '"',
+    }.items():
         text = text.replace(a, b)
-    return _sanitize_report_text(text)
+    # Strip any remaining non-ASCII to avoid ReportLab encoding errors
+    return text.encode("ascii", errors="ignore").decode("ascii").strip()
 
-def _pdf_xml(text: str) -> str:
-    import html
-    text = _pdf_safe(text)
-    text = html.escape(text)
-    return text
 
-def _pdf_para(text, style):
+def _safe_para(text, style):
+    """Create a ReportLab Paragraph safely — falls back to plain text on error."""
     from reportlab.platypus import Paragraph
-    return Paragraph(_pdf_xml(text), style)
+    import html
+    safe = html.escape(_pdf_safe(text))
+    try:
+        return Paragraph(safe, style)
+    except Exception:
+        return Paragraph(_pdf_safe(text)[:200], style)
 
-def _pdf_markdown_para(text, style):
+
+def _md_para(text, style):
+    """Paragraph with basic **bold** and bullet conversion."""
     from reportlab.platypus import Paragraph
     import html
     text = _pdf_safe(text).strip()
-    text = re.sub(r"^[-*]\s+","• ",text)
+    text = re.sub(r"^[-*]\s+", "• ", text)
     escaped = html.escape(text)
-    escaped = re.sub(r"\*\*(.*?)\*\*",r"<b>\1</b>",escaped)
-    return Paragraph(escaped, style)
+    escaped = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", escaped)
+    try:
+        return Paragraph(escaped, style)
+    except Exception:
+        return Paragraph(html.escape(_pdf_safe(text))[:200], style)
+
 
 def make_pdf_report(r1, r2, r3, llm_text: str) -> bytes:
     from reportlab.lib import colors
-    from reportlab.lib.enums import TA_CENTER
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.units import mm
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer,
+        Table, TableStyle, HRFlowable
+    )
+
+    # ── Colour palette ───────────────────────────────────────────
+    C_TEAL   = colors.HexColor("#0f766e")
+    C_NAVY   = colors.HexColor("#083344")
+    C_GRID   = colors.HexColor("#cbd5e1")
+    C_ALT    = colors.HexColor("#f8fafc")
+    C_DARK   = colors.HexColor("#0f172a")
+    C_MUTED  = colors.HexColor("#334155")
 
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4,
-                            rightMargin=13*mm, leftMargin=13*mm,
-                            topMargin=13*mm, bottomMargin=13*mm)
-    styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name="CoverTitle",parent=styles["Title"],fontName="Helvetica-Bold",
-        fontSize=17.5,leading=21,alignment=TA_CENTER,textColor=colors.HexColor("#063b2f"),spaceAfter=4))
-    styles.add(ParagraphStyle(name="CoverSub",parent=styles["Normal"],fontSize=8.5,leading=11,
-        alignment=TA_CENTER,textColor=colors.HexColor("#475569"),spaceAfter=8))
-    styles.add(ParagraphStyle(name="Section",parent=styles["Heading2"],fontName="Helvetica-Bold",
-        fontSize=11.5,leading=14,textColor=colors.HexColor("#0f766e"),spaceBefore=9,spaceAfter=5))
-    styles.add(ParagraphStyle(name="Cell",parent=styles["Normal"],fontSize=7.4,leading=9.4,
-        textColor=colors.HexColor("#0f172a"),wordWrap="CJK"))
-    styles.add(ParagraphStyle(name="CellBold",parent=styles["Cell"],fontName="Helvetica-Bold"))
-    styles.add(ParagraphStyle(name="Body",parent=styles["Normal"],fontSize=8.5,leading=11.2,
-        textColor=colors.HexColor("#0f172a"),spaceAfter=4.5,wordWrap="CJK"))
-    styles.add(ParagraphStyle(name="Small",parent=styles["Normal"],fontSize=7.5,leading=9.5,
-        textColor=colors.HexColor("#334155"),spaceAfter=3,wordWrap="CJK"))
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        rightMargin=13*mm, leftMargin=13*mm,
+        topMargin=13*mm,  bottomMargin=13*mm,
+    )
 
+    # ── Styles ───────────────────────────────────────────────────
+    base = getSampleStyleSheet()
+    base.add(ParagraphStyle("RTitle", parent=base["Title"],
+        fontName="Helvetica-Bold", fontSize=17, leading=21,
+        alignment=TA_CENTER, textColor=colors.HexColor("#063b2f"), spaceAfter=3))
+    base.add(ParagraphStyle("RSub", parent=base["Normal"],
+        fontSize=8, leading=10, alignment=TA_CENTER,
+        textColor=colors.HexColor("#475569"), spaceAfter=6))
+    base.add(ParagraphStyle("RSection", parent=base["Normal"],
+        fontName="Helvetica-Bold", fontSize=11, leading=14,
+        textColor=C_TEAL, spaceBefore=10, spaceAfter=5))
+    base.add(ParagraphStyle("RBody", parent=base["Normal"],
+        fontSize=8.5, leading=11.5, textColor=C_DARK,
+        spaceAfter=4, wordWrap="CJK"))
+    base.add(ParagraphStyle("RSmall", parent=base["Normal"],
+        fontSize=7.5, leading=10, textColor=C_MUTED,
+        spaceAfter=3, wordWrap="CJK"))
+
+    # ── Shared table style helper ────────────────────────────────
+    def base_table_style(header_color):
+        return TableStyle([
+            ("BACKGROUND",    (0, 0), (-1, 0), header_color),
+            ("TEXTCOLOR",     (0, 0), (-1, 0), colors.white),
+            ("FONTNAME",      (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE",      (0, 0), (-1, 0), 8),
+            ("FONTNAME",      (0, 1), (-1, -1), "Helvetica"),
+            ("FONTSIZE",      (0, 1), (-1, -1), 8),
+            ("FONTNAME",      (0, 1), (0, -1), "Helvetica-Bold"),  # bold first col
+            ("TEXTCOLOR",     (0, 1), (-1, -1), C_DARK),
+            ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+            ("GRID",          (0, 0), (-1, -1), 0.3, C_GRID),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 5),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 5),
+            ("TOPPADDING",    (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("ROWBACKGROUNDS",(0, 1), (-1, -1), [colors.white, C_ALT]),
+        ])
+
+    # ── Build content ────────────────────────────────────────────
     story = []
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    story.append(Paragraph("PV Plant Fault Diagnosis Report",styles["CoverTitle"]))
-    story.append(Paragraph(_pdf_xml(f"Hybrid AI Architecture for Solar PV Fault Diagnosis | Generated: {ts}"),styles["CoverSub"]))
-    story.append(HRFlowable(width="100%",thickness=1.1,color=colors.HexColor("#0f766e")))
-    story.append(Spacer(1,6))
 
-    z1_s = r1["label"] if r1 else "No data"
-    z2_s = r2["label"] if r2 else "No data"
-    z3_s = r3["label"] if r3 else "No data"
-    overall = "FAULT DETECTED" if ((r1 and r1.get("cls")!=0) or (r2 and r2.get("cls")!=0) or (r3 and r3.get("fault"))) else "NORMAL / MONITORING"
+    story.append(Paragraph("PV Plant Fault Diagnosis Report", base["RTitle"]))
+    story.append(Paragraph(
+        f"Hybrid AI Architecture for Solar PV Fault Diagnosis  |  Generated: {ts}",
+        base["RSub"]
+    ))
+    story.append(HRFlowable(width="100%", thickness=1.0, color=C_TEAL))
+    story.append(Spacer(1, 6))
 
-    story.append(Paragraph("1. Executive Summary",styles["Section"]))
-    tbl = Table([
-        [_pdf_para("Item",styles["CellBold"]),_pdf_para("Result",styles["CellBold"]),_pdf_para("Model Evidence",styles["CellBold"])],
-        [_pdf_para("System Status",styles["CellBold"]),_pdf_para(overall,styles["Cell"]),_pdf_para("Hybrid diagnostic output",styles["Cell"])],
-        [_pdf_para("Zone 1 — PV Array",styles["CellBold"]),_pdf_para(z1_s,styles["Cell"]),_pdf_para(f"Confidence: {_confidence(r1)}",styles["Cell"])],
-        [_pdf_para("Zone 2 — IGBT Inverter",styles["CellBold"]),_pdf_para(z2_s,styles["Cell"]),_pdf_para(f"Confidence: {_confidence(r2)}",styles["Cell"])],
-        [_pdf_para("Zone 3 — DC-Link Capacitor",styles["CellBold"]),_pdf_para(z3_s,styles["Cell"]),_pdf_para("XGBoost ESR regression",styles["Cell"])],
-    ],colWidths=[42*mm,70*mm,62*mm],repeatRows=1,splitByRow=1)
-    tbl.setStyle(TableStyle([
-        ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#0f766e")),("TEXTCOLOR",(0,0),(-1,0),colors.white),
-        ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("GRID",(0,0),(-1,-1),0.25,colors.HexColor("#cbd5e1")),
-        ("VALIGN",(0,0),(-1,-1),"TOP"),("LEFTPADDING",(0,0),(-1,-1),4),("RIGHTPADDING",(0,0),(-1,-1),4),
-        ("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4),
-        ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,colors.HexColor("#f8fafc")]),
-    ]))
-    story.append(tbl)
+    # ── Resolve result labels ────────────────────────────────────
+    z1_s = _pdf_safe(r1["label"]) if r1 else "No data provided"
+    z2_s = _pdf_safe(r2["label"]) if r2 else "No data provided"
+    z3_s = _pdf_safe(r3["label"]) if r3 else "No data provided"
+    z1_conf = _confidence(r1)
+    z2_conf = _confidence(r2)
+    overall = "FAULT DETECTED" if (
+        (r1 and r1.get("cls") != 0) or
+        (r2 and r2.get("cls") != 0) or
+        (r3 and r3.get("fault"))
+    ) else "NORMAL / MONITORING"
 
-    z1_detail = "No Stage 2 output"
+    # ── Section 1: Executive Summary ─────────────────────────────
+    story.append(Paragraph("1. Executive Summary", base["RSection"]))
+    t1_data = [
+        ["Item",                      "Result",   "Model Evidence"],
+        ["System Status",             overall,    "Hybrid diagnostic output"],
+        ["Zone 1 — PV Array",         z1_s,       f"Confidence: {z1_conf}"],
+        ["Zone 2 — IGBT Inverter",    z2_s,       f"Confidence: {z2_conf}"],
+        ["Zone 3 — DC-Link Capacitor",z3_s,       "XGBoost ESR regression"],
+    ]
+    t1 = Table(t1_data, colWidths=[44*mm, 72*mm, 60*mm],
+               repeatRows=1, splitByRow=1)
+    t1.setStyle(base_table_style(C_TEAL))
+    story.append(t1)
+    story.append(Spacer(1, 6))
+
+    # ── Section 2: Zone-Specific Outputs ─────────────────────────
+    story.append(Paragraph("2. Zone-Specific Outputs", base["RSection"]))
+
+    z1_detail = "Stage 2 localisation not run"
     if r1 and r1.get("s2_label"):
         if r1.get("stage2_fault_type") == "Short-Circuit":
-            z1_detail = f"Array: {r1.get('stage2_array')} | R_LL={r1.get('r_ll')} | Severity: {r1.get('sc_severity')}"
+            z1_detail = (
+                f"Faulty array: {r1.get('stage2_array', 'Unknown')}  |  "
+                f"R_LL = {r1.get('r_ll', 'N/A')}  |  "
+                f"Severity: {r1.get('sc_severity', 'N/A')}"
+            )
         else:
-            z1_detail = f"Array: {r1.get('stage2_array')} | R_LL: Not applicable (OC)"
-    z3_detail = (f"ESR={r3['esr']:.4f} Ohm | Deg={r3['deg']:.1f}% | V_ripple={r3['vrip']:.4f} V | T={r3['tamb']:.1f}C") if r3 else "No data"
+            z1_detail = (
+                f"Faulty array: {r1.get('stage2_array', 'Unknown')}  |  "
+                f"R_LL: Not applicable (open-circuit fault)"
+            )
 
-    story.append(Paragraph("2. Zone-Specific Outputs",styles["Section"]))
-    tbl2 = Table([
-        [_pdf_para("Zone",styles["CellBold"]),_pdf_para("Primary Output",styles["CellBold"]),_pdf_para("Engineering Detail",styles["CellBold"])],
-        [_pdf_para("Zone 1",styles["CellBold"]),_pdf_para(z1_s,styles["Cell"]),_pdf_para(z1_detail,styles["Cell"])],
-        [_pdf_para("Zone 2",styles["CellBold"]),_pdf_para(z2_s,styles["Cell"]),_pdf_para("Alpha-beta current trajectory analysis",styles["Cell"])],
-        [_pdf_para("Zone 3",styles["CellBold"]),_pdf_para(z3_s,styles["Cell"]),_pdf_para(z3_detail,styles["Cell"])],
-    ],colWidths=[24*mm,55*mm,95*mm],repeatRows=1,splitByRow=1)
-    tbl2.setStyle(TableStyle([
-        ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#083344")),("TEXTCOLOR",(0,0),(-1,0),colors.white),
-        ("GRID",(0,0),(-1,-1),0.25,colors.HexColor("#cbd5e1")),("VALIGN",(0,0),(-1,-1),"TOP"),
-        ("LEFTPADDING",(0,0),(-1,-1),4),("RIGHTPADDING",(0,0),(-1,-1),4),
-        ("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4),
-        ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,colors.HexColor("#f8fafc")]),
-    ]))
-    story.append(tbl2)
+    z3_detail = "No data provided"
+    if r3:
+        z3_detail = (
+            f"Predicted ESR = {r3['esr']:.4f} Ohm  |  "
+            f"Degradation = {r3['deg']:.1f}%  |  "
+            f"V_ripple = {r3['vrip']:.4f} V  |  "
+            f"T_ambient = {r3['tamb']:.1f} deg C"
+        )
 
-    story.append(Paragraph("3. Engineering Analysis",styles["Section"]))
-    clean_text = _sanitize_report_text(llm_text or _local_report(r1,r2,r3))
-    for raw in clean_text.split("\n"):
-        block = raw.strip()
-        if not block: story.append(Spacer(1,3)); continue
-        heading = re.match(r"^\*\*(\d+\.\s*.*?)\*\*$",block)
-        if heading: story.append(Paragraph(_pdf_xml(heading.group(1)),styles["Section"]))
-        else: story.append(_pdf_markdown_para(block,styles["Body"]))
+    t2_data = [
+        ["Zone",    "Primary Output", "Engineering Detail"],
+        ["Zone 1",  z1_s,             _pdf_safe(z1_detail)],
+        ["Zone 2",  z2_s,             "Alpha-beta current trajectory (Clarke transform)"],
+        ["Zone 3",  z3_s,             _pdf_safe(z3_detail)],
+    ]
+    t2 = Table(t2_data, colWidths=[20*mm, 55*mm, 101*mm],
+               repeatRows=1, splitByRow=1)
+    t2.setStyle(base_table_style(C_NAVY))
+    story.append(t2)
+    story.append(Spacer(1, 6))
 
-    story.append(Paragraph("4. Verification Note",styles["Section"]))
-    story.append(Paragraph(_pdf_xml("This report is an AI-assisted diagnostic aid. Final engineering decisions should be verified using electrical measurements, thermal inspection, site safety procedures, and the plant maintenance policy."),styles["Small"]))
+    # ── Section 3: Engineering Analysis ──────────────────────────
+    story.append(Paragraph("3. Engineering Analysis", base["RSection"]))
+    raw_analysis = _sanitize_report_text(llm_text or _local_report(r1, r2, r3))
+    for line in raw_analysis.split("\n"):
+        block = line.strip()
+        if not block:
+            story.append(Spacer(1, 3))
+            continue
+        # Skip GPT document title lines
+        if re.match(r"^#+\s*Engineering", block, re.IGNORECASE):
+            continue
+        # Convert stray ## headings
+        hm = re.match(r"^#{1,2}\s+(.+)", block)
+        if hm:
+            story.append(Paragraph(_pdf_safe(hm.group(1)), base["RSection"]))
+            continue
+        # Standalone bold title: **Title**
+        bm = re.match(r"^\*\*([^*]+)\*\*$", block)
+        if bm:
+            story.append(Paragraph(_pdf_safe(bm.group(1)), base["RSection"]))
+            continue
+        story.append(_md_para(block, base["RBody"]))
+
+    # ── Section 4: Verification Note ─────────────────────────────
+    story.append(Spacer(1, 4))
+    story.append(Paragraph("4. Verification Note", base["RSection"]))
+    story.append(Paragraph(
+        "This report is an AI-assisted diagnostic aid. "
+        "Final engineering decisions must be verified using electrical "
+        "measurements, thermal inspection, site safety procedures, "
+        "and the plant maintenance policy.",
+        base["RSmall"]
+    ))
+
     doc.build(story)
     return buf.getvalue()
 
@@ -1375,22 +1495,21 @@ def main():
             ts_str = datetime.now().strftime("%Y%m%d_%H%M")
 
             if fmt == "PDF (.pdf)":
-                if st.button("⬇ Download PDF", use_container_width=True, type="primary"):
-                    with st.spinner("Building PDF…"):
-                        try:
-                            pdf = make_pdf_report(
-                                st.session_state.r1, st.session_state.r2,
-                                st.session_state.r3, st.session_state.llm,
-                            )
-                            st.download_button(
-                                label="📄 Click to save PDF",
-                                data=pdf,
-                                file_name=f"pv_report_{ts_str}.pdf",
-                                mime="application/pdf",
-                                use_container_width=True,
-                            )
-                        except Exception as e:
-                            st.error(f"PDF error: {e}")
+                with st.spinner("Building PDF…"):
+                    try:
+                        pdf = make_pdf_report(
+                            st.session_state.r1, st.session_state.r2,
+                            st.session_state.r3, st.session_state.llm,
+                        )
+                        st.download_button(
+                            label="⬇ Download PDF",
+                            data=pdf,
+                            file_name=f"pv_report_{ts_str}.pdf",
+                            mime="application/pdf",
+                            use_container_width=True,
+                        )
+                    except Exception as e:
+                        st.error(f"PDF error: {e}")
 
             elif fmt == "Markdown (.md)":
                 md = make_markdown_report(
